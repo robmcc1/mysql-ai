@@ -154,7 +154,7 @@ FROM   documents
 ORDER  BY score ASC
 LIMIT  5;
 
--- Inner product (higher = more similar for normalised vectors)
+-- Inner product (higher = more similar for normalized vectors)
 SELECT content,
        VECTOR_INNER_PRODUCT(embedding, ollama_embed('my search query')) AS score
 FROM   documents

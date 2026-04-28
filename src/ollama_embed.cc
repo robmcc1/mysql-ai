@@ -75,7 +75,7 @@ static std::vector<float> fetch_embedding(const char *text,
         return result;
     }
 
-    // Initialise libcurl
+    // Initialize libcurl
     CURL *curl = curl_easy_init();
     if (!curl) {
         free(request_body);
