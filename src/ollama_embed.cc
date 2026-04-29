@@ -94,6 +94,7 @@ static std::vector<float> fetch_embedding(const char *text,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &response);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT,        CURL_TIMEOUT_S);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);
     // Do not verify SSL — local plaintext HTTP, but be explicit
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
