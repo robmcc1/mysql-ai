@@ -205,5 +205,5 @@ Then remove `ollama_embed.so` from the plugin directory.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+This project is released under the MIT License.
 cJSON is © Dave Gamble and contributors, also released under the MIT License.
