@@ -29,11 +29,12 @@
 #include <mysql.h>
 
 // --------------------------------------------------------------------------
-// Constants
+// Compiled-in defaults (overridable at call time via optional UDF arguments;
+// see the embed() wrapper and ollama_config table in setup.sql)
 // --------------------------------------------------------------------------
-static const char   OLLAMA_URL[]      = "http://localhost:11434/api/embeddings";
-static const char   OLLAMA_MODEL[]    = "qwen3-embedding:0.6b";
-static const int    EXPECTED_DIMS     = 896;
+static const char  OLLAMA_URL[]   = "http://localhost:11434/api/embeddings";
+static const char  OLLAMA_MODEL[] = "qwen3-embedding:0.6b";
+static const int   EXPECTED_DIMS  = 896;   // pre-allocation hint; resized automatically if needed
 static const long   CURL_TIMEOUT_S   = 30L;
 static const size_t MAX_ERROR_SNIPPET = 120;
 
@@ -68,12 +69,24 @@ static void ensure_curl_global_init()
 }
 
 // --------------------------------------------------------------------------
+// Configuration that can be overridden per call via optional UDF arguments
+// --------------------------------------------------------------------------
+struct EmbedConfig {
+    const char *url;            // Ollama API endpoint
+    const char *model;          // Embedding model name
+    const char *api_key;        // Bearer token; nullptr = no auth header
+    const char *ssl_cert_path;  // CA cert bundle path (CURLOPT_CAINFO); nullptr = system default
+    bool        ssl_verify_off; // true = skip peer/host TLS verification
+};
+
+// --------------------------------------------------------------------------
 // Helper: call Ollama and return the embedding as a vector of floats.
 // On error, returns an empty vector and sets errmsg.
 // --------------------------------------------------------------------------
-static std::vector<float> fetch_embedding(const char *text,
-                                          char       *errmsg,
-                                          size_t      errmsg_size)
+static std::vector<float> fetch_embedding(const char        *text,
+                                          const EmbedConfig &cfg,
+                                          char              *errmsg,
+                                          size_t             errmsg_size)
 {
     std::vector<float> result;
 
@@ -89,7 +102,7 @@ static std::vector<float> fetch_embedding(const char *text,
         snprintf(errmsg, errmsg_size, "ollama_embed: cJSON_CreateObject failed");
         return result;
     }
-    if (!cJSON_AddStringToObject(root, "model", OLLAMA_MODEL)) {
+    if (!cJSON_AddStringToObject(root, "model", cfg.model)) {
         cJSON_Delete(root);
         snprintf(errmsg, errmsg_size, "ollama_embed: cJSON_AddStringToObject failed for model");
         return result;
@@ -117,8 +130,12 @@ static std::vector<float> fetch_embedding(const char *text,
     WriteBuffer response;
     struct curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (cfg.api_key && cfg.api_key[0] != '\0') {
+        std::string auth_hdr = std::string("Authorization: Bearer ") + cfg.api_key;
+        headers = curl_slist_append(headers, auth_hdr.c_str());
+    }
 
-    curl_easy_setopt(curl, CURLOPT_URL,            OLLAMA_URL);
+    curl_easy_setopt(curl, CURLOPT_URL,            cfg.url);
     curl_easy_setopt(curl, CURLOPT_POST,           1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS,     request_body);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
@@ -126,9 +143,15 @@ static std::vector<float> fetch_embedding(const char *text,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &response);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT,        CURL_TIMEOUT_S);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);
-    // Do not verify SSL — local plaintext HTTP, but be explicit
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    if (cfg.ssl_verify_off) {
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    } else {
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+        if (cfg.ssl_cert_path && cfg.ssl_cert_path[0] != '\0')
+            curl_easy_setopt(curl, CURLOPT_CAINFO, cfg.ssl_cert_path);
+    }
 
     CURLcode rc = curl_easy_perform(curl);
 
@@ -182,15 +205,8 @@ static std::vector<float> fetch_embedding(const char *text,
         return result;
     }
 
-    // Dimension can only be checked after parsing; validate before copying.
+    // Dimension can vary by model; accept whatever the API returns.
     int dim = cJSON_GetArraySize(embedding_arr);
-    if (dim != EXPECTED_DIMS) {
-        snprintf(errmsg, errmsg_size,
-                 "ollama_embed: expected %d dimensions, got %d",
-                 EXPECTED_DIMS, dim);
-        cJSON_Delete(json);
-        return result;
-    }
     result.reserve(static_cast<size_t>(dim));
 
     cJSON *item = nullptr;
@@ -221,16 +237,18 @@ extern "C" {
 // ------------------------------------------------------------------
 my_bool ollama_embed_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
-    if (args->arg_count != 1) {
+    if (args->arg_count < 1 || args->arg_count > 6) {
         strncpy(message,
-                "ollama_embed() requires exactly one string argument",
+                "ollama_embed() requires 1 to 6 string arguments: "
+                "text [, model [, api_url [, api_key [, ssl_cert_path [, ssl_verify_off]]]]]",
                 MYSQL_ERRMSG_SIZE - 1);
         message[MYSQL_ERRMSG_SIZE - 1] = '\0';
         return 1;
     }
 
-    // Coerce the argument to STRING so MySQL converts non-string types for us
-    args->arg_type[0] = STRING_RESULT;
+    // Coerce all arguments to STRING so MySQL converts non-string types for us
+    for (unsigned int i = 0; i < args->arg_count; ++i)
+        args->arg_type[i] = STRING_RESULT;
 
     // Return type is STRING (binary blob carrying the packed floats)
     initid->max_length  = static_cast<unsigned long>(EXPECTED_DIMS * sizeof(float));
@@ -281,11 +299,47 @@ char *ollama_embed(UDF_INIT *initid, UDF_ARGS *args,
         return nullptr;
     }
 
-    // Copy the argument to a NUL-terminated C string
+    // Copy the required text argument to a NUL-terminated C string
     std::string text(args->args[0], args->lengths[0]);
 
+    // Build runtime config from optional arguments, falling back to compiled defaults
+    std::string s_model, s_url, s_api_key, s_ssl_cert;
+    EmbedConfig cfg;
+
+    if (args->arg_count > 1 && args->args[1] && args->lengths[1] > 0) {
+        s_model   = std::string(args->args[1], args->lengths[1]);
+        cfg.model = s_model.c_str();
+    } else {
+        cfg.model = OLLAMA_MODEL;
+    }
+
+    if (args->arg_count > 2 && args->args[2] && args->lengths[2] > 0) {
+        s_url   = std::string(args->args[2], args->lengths[2]);
+        cfg.url = s_url.c_str();
+    } else {
+        cfg.url = OLLAMA_URL;
+    }
+
+    if (args->arg_count > 3 && args->args[3] && args->lengths[3] > 0) {
+        s_api_key   = std::string(args->args[3], args->lengths[3]);
+        cfg.api_key = s_api_key.c_str();
+    } else {
+        cfg.api_key = nullptr;
+    }
+
+    if (args->arg_count > 4 && args->args[4] && args->lengths[4] > 0) {
+        s_ssl_cert        = std::string(args->args[4], args->lengths[4]);
+        cfg.ssl_cert_path = s_ssl_cert.c_str();
+    } else {
+        cfg.ssl_cert_path = nullptr;
+    }
+
+    // ssl_verify_off arg: "1" = skip verification (default); "0" = enforce
+    cfg.ssl_verify_off = !(args->arg_count > 5 && args->args[5] &&
+                           args->lengths[5] > 0 && args->args[5][0] == '0');
+
     char errmsg[MYSQL_ERRMSG_SIZE] = {};
-    std::vector<float> embedding = fetch_embedding(text.c_str(), errmsg, sizeof(errmsg));
+    std::vector<float> embedding = fetch_embedding(text.c_str(), cfg, errmsg, sizeof(errmsg));
 
     if (embedding.empty()) {
         // Log the error message; MySQL surfaces it as a warning/error
