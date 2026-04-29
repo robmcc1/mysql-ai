@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 #include <string>
 
@@ -52,6 +53,20 @@ static size_t curl_write_cb(char *ptr, size_t size, size_t nmemb, void *userdata
 }
 
 // --------------------------------------------------------------------------
+// libcurl global initialization — must be called exactly once across all
+// threads before any curl_easy_* calls.  Use std::call_once so that the
+// first concurrent invocation wins and subsequent ones are no-ops.
+// --------------------------------------------------------------------------
+static std::once_flag curl_init_flag;
+
+static void ensure_curl_global_init()
+{
+    std::call_once(curl_init_flag, []() {
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+    });
+}
+
+// --------------------------------------------------------------------------
 // Helper: call Ollama and return the embedding as a vector of floats.
 // On error, returns an empty vector and sets errmsg.
 // --------------------------------------------------------------------------
@@ -59,6 +74,8 @@ static std::vector<float> fetch_embedding(const char *text,
                                           char       *errmsg,
                                           size_t      errmsg_size)
 {
+    ensure_curl_global_init();
+
     std::vector<float> result;
 
     // Build JSON request body
@@ -161,6 +178,13 @@ static std::vector<float> fetch_embedding(const char *text,
     }
 
     int dim = cJSON_GetArraySize(embedding_arr);
+    if (dim != EXPECTED_DIMS) {
+        snprintf(errmsg, errmsg_size,
+                 "ollama_embed: expected %d dimensions, got %d",
+                 EXPECTED_DIMS, dim);
+        cJSON_Delete(json);
+        return result;
+    }
     result.reserve(static_cast<size_t>(dim));
 
     cJSON *item = nullptr;

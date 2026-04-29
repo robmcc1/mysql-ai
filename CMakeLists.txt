@@ -78,7 +78,7 @@ set_target_properties(ollama_embed PROPERTIES
 
 # ---------------------------------------------------------------------------
 # Optional: install target — copies the .so to the MySQL plugin directory.
-# Override with: cmake -DCMAKE_INSTALL_PREFIX=/usr/lib/mysql/plugin ..
+# Override with: cmake -DMYSQL_PLUGIN_DIR=/usr/lib/mysql/plugin ..
 # ---------------------------------------------------------------------------
 if(NOT DEFINED MYSQL_PLUGIN_DIR)
     set(MYSQL_PLUGIN_DIR "/usr/lib/mysql/plugin" CACHE PATH
