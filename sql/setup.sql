@@ -11,12 +11,16 @@
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
--- 0. Allow stored functions/procedures to invoke UDFs and read tables
---    when binary logging is enabled (default on most servers).
---    For a permanent fix add this to my.cnf:
+-- 0. Binary-log trust note
+--    The stored functions in this file use READS SQL DATA / NOT DETERMINISTIC
+--    declarations, which are sufficient for MySQL's binary-log safety checks.
+--    The SET GLOBAL log_bin_trust_function_creators override is therefore NOT
+--    needed and has been intentionally omitted.
+--    If you encounter a binary-log error on an older or stricter server
+--    configuration, add the following line to your my.cnf instead of running
+--    it as a script (a global script-level SET GLOBAL affects all databases):
 --        log_bin_trust_function_creators = 1
 -- ---------------------------------------------------------------------------
-SET GLOBAL log_bin_trust_function_creators = 1;
 
 -- ---------------------------------------------------------------------------
 -- 1. Register the UDF
@@ -40,7 +44,7 @@ CREATE TABLE IF NOT EXISTS ollama_profiles (
     api_url        VARCHAR(1024) NOT NULL DEFAULT 'http://localhost:11434/api/embeddings',
     api_key        VARCHAR(1024) DEFAULT NULL,        -- NULL = no auth header
     ssl_cert_path  VARCHAR(1024) DEFAULT NULL,        -- NULL = system CA bundle
-    ssl_verify_off TINYINT(1)    NOT NULL DEFAULT 1,  -- 1 = skip TLS verify; 0 = enforce
+    ssl_verify_off TINYINT(1)    NOT NULL DEFAULT 0,  -- 1 = skip TLS verify; 0 = enforce (default)
     dims           INT           NOT NULL,            -- actual dims; set by probe at creation
     created_date   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -98,7 +102,9 @@ BEGIN
     LIMIT  1;
 
     IF v_model IS NULL THEN
-        RETURN NULL;  -- no active profile; caller must CALL ollama_profile_use()
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT =
+                'embed: no active profile — call ollama_profile_use() or ollama_profile_create() first';
     END IF;
 
     RETURN ollama_embed(
@@ -240,7 +246,8 @@ BEGIN
             '`content`      TEXT     NOT NULL,',
             '`embedding`    VECTOR(', v_dims, '),',
             '`created_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,',
-            '`updated_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+            '`updated_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,',
+            'VECTOR INDEX vidx_embedding (embedding)',
         ')'
     );
     PREPARE __stmt FROM @__ddl;
@@ -248,8 +255,8 @@ BEGIN
     DEALLOCATE PREPARE __stmt;
 
     INSERT INTO ollama_collections (profile_id, collection_name, table_name)
-        VALUES (v_profile_id, p_collection, v_table)
-        ON DUPLICATE KEY UPDATE table_name = VALUES(table_name);
+        VALUES (v_profile_id, p_collection, v_table) AS new_row
+        ON DUPLICATE KEY UPDATE table_name = new_row.table_name;
 
     SELECT CONCAT(
         'Collection "', p_collection, '" ready  |  ',
@@ -372,7 +379,10 @@ DELIMITER ;
 -- ---------------------------------------------------------------------------
 -- 9. embed_search(collection_name, query, limit)
 --    Returns top p_limit rows from the named collection ranked by cosine
---    similarity to p_query (lower score = more similar, range [0, 2]).
+--    similarity to p_query.  Result columns:
+--      id, content, created_date, updated_date,
+--      score         — raw cosine distance (lower = more similar, range [0, 2])
+--      similarity_pct — human-friendly percentage (higher = more similar, 0–100)
 -- ---------------------------------------------------------------------------
 DROP PROCEDURE IF EXISTS embed_search;
 
@@ -428,13 +438,14 @@ BEGIN
     SET @__limit = p_limit;
     SET @__sql = CONCAT(
         'SELECT id, content, created_date, updated_date, ',
-        'VECTOR_COSINE_DISTANCE(embedding, CAST(? AS VECTOR(', v_dims, '))) AS score ',
+        'VECTOR_COSINE_DISTANCE(embedding, CAST(? AS VECTOR(', v_dims, '))) AS score, ',
+        'ROUND((1 - VECTOR_COSINE_DISTANCE(embedding, CAST(? AS VECTOR(', v_dims, ')))) * 100, 2) AS similarity_pct ',
         'FROM `', v_table, '` ',
         'ORDER BY score ASC ',
         'LIMIT ?'
     );
     PREPARE __stmt FROM @__sql;
-    EXECUTE __stmt USING @__raw, @__limit;
+    EXECUTE __stmt USING @__raw, @__raw, @__limit;
     DEALLOCATE PREPARE __stmt;
 END $$
 DELIMITER ;
@@ -449,7 +460,8 @@ DELIMITER ;
 --     'http://localhost:11434/api/embeddings',          -- api_url
 --     NULL,                                            -- api_key: NULL = no auth
 --     NULL,                                            -- ssl_cert_path: NULL = system CA
---     1                                                -- ssl_verify_off: 1 = skip (local)
+--     1                                                -- ssl_verify_off: 1 = skip TLS (local Ollama)
+--                                                      --   use 0 for remote/production endpoints
 -- );
 --
 -- CALL ollama_collection_create('github.my-repo');

@@ -22,7 +22,7 @@ CALL ollama_profile_create(
     'local-qwen3',
     'qwen3-embedding:0.6b',
     'http://localhost:11434/api/embeddings',
-    NULL, NULL, 1  -- api_key, ssl_cert_path, ssl_verify_off
+    NULL, NULL, 1  -- api_key, ssl_cert_path, ssl_verify_off=1 (skip TLS for local Ollama)
 );
 
 -- 2. Create named collections under that profile
@@ -32,7 +32,7 @@ CALL ollama_collection_create('confluence.team-wiki');
 -- 3. Insert documents
 CALL embed_insert('github.my-repo', 'Fix null pointer in auth middleware');
 
--- 4. Search by semantic similarity (cosine; lower = more similar)
+-- 4. Search by semantic similarity (returns score and similarity_pct)
 CALL embed_search('github.my-repo', 'crash on login', 5);
 
 -- See all profiles and their collections
@@ -130,6 +130,12 @@ and `v_collections` tables/view, and defines all stored procedures and functions
 No data is pre-populated — use `ollama_profile_create()` to configure your first
 profile after the schema is installed.
 
+> **Note:** `setup.sql` does **not** set `SET GLOBAL log_bin_trust_function_creators`.
+> The stored functions use `READS SQL DATA` / `NOT DETERMINISTIC` declarations which
+> satisfy MySQL's binary-log safety requirements.  If you encounter a binary-log error
+> on a stricter server configuration, add `log_bin_trust_function_creators = 1` to
+> your `my.cnf` instead.
+
 To register only the UDF manually:
 
 ```sql
@@ -154,7 +160,7 @@ CALL ollama_profile_create(
     'http://localhost:11434/api/embeddings',         -- API endpoint
     NULL,                                           -- api_key:  NULL = no auth
     NULL,                                           -- ssl_cert_path: NULL = system CA
-    1                                               -- ssl_verify_off: 1 = skip (local)
+    1                                               -- ssl_verify_off: 1 = skip TLS (local Ollama)
 );
 -- Creates profile, probes model to determine dims, activates it for this session.
 
@@ -165,7 +171,7 @@ CALL ollama_profile_create(
     'https://my-ollama-host:11434/api/embeddings',
     'sk-my-api-key',
     '/etc/ssl/certs/my-ca.crt',
-    0                                               -- ssl_verify_off: 0 = enforce TLS
+    0                                               -- ssl_verify_off: 0 = enforce TLS (default, secure)
 );
 ```
 
@@ -231,7 +237,9 @@ CALL embed_insert('confluence.team-wiki', 'On-call runbook for database alerts')
 ### Semantic similarity search
 
 ```sql
--- Returns top 5 by cosine similarity (lower score = more similar, range [0, 2])
+-- Returns top 5 by cosine similarity
+-- Columns: id, content, created_date, updated_date, score (lower = more similar, [0,2]),
+--          similarity_pct (higher = more similar, 0–100)
 CALL embed_search('github.my-repo', 'crash on login', 5);
 ```
 
@@ -250,6 +258,17 @@ LIMIT  5;
 ---
 
 ## Notes
+
+### TLS verification default
+TLS peer and host verification is **enabled by default** (`ssl_verify_off = 0`).
+Pass `ssl_verify_off = 1` explicitly when connecting to a local Ollama instance
+over plain HTTP or a self-signed certificate.  Always use `ssl_verify_off = 0`
+for remote or production Ollama endpoints.
+
+### Vector index
+Each collection table is created with a `VECTOR INDEX` on the `embedding` column,
+enabling MySQL 8.0.45 Enterprise's Approximate Nearest Neighbor (ANN) search.
+This avoids full table scans during `embed_search` calls.
 
 ### Embedding dimensions
 The UDF accepts whatever dimension count the model returns — there is no

@@ -35,7 +35,8 @@
 static const char  OLLAMA_URL[]   = "http://localhost:11434/api/embeddings";
 static const char  OLLAMA_MODEL[] = "qwen3-embedding:0.6b";
 static const int   EXPECTED_DIMS  = 896;   // pre-allocation hint; resized automatically if needed
-static const long   CURL_TIMEOUT_S   = 30L;
+static const long   CURL_TIMEOUT_S         = 30L;
+static const long   CURL_CONNECT_TIMEOUT_S = 5L;   // fail fast when Ollama is not running
 static const size_t MAX_ERROR_SNIPPET = 120;
 
 // --------------------------------------------------------------------------
@@ -142,6 +143,7 @@ static std::vector<float> fetch_embedding(const char        *text,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &response);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT,        CURL_TIMEOUT_S);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CURL_CONNECT_TIMEOUT_S);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);
     if (cfg.ssl_verify_off) {
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -334,9 +336,9 @@ char *ollama_embed(UDF_INIT *initid, UDF_ARGS *args,
         cfg.ssl_cert_path = nullptr;
     }
 
-    // ssl_verify_off arg: "1" = skip verification (default); "0" = enforce
-    cfg.ssl_verify_off = !(args->arg_count > 5 && args->args[5] &&
-                           args->lengths[5] > 0 && args->args[5][0] == '0');
+    // ssl_verify_off arg: "1" = skip verification; "0" or absent = enforce (default, secure)
+    cfg.ssl_verify_off = (args->arg_count > 5 && args->args[5] &&
+                          args->lengths[5] > 0 && args->args[5][0] == '1');
 
     char errmsg[MYSQL_ERRMSG_SIZE] = {};
     std::vector<float> embedding = fetch_embedding(text.c_str(), cfg, errmsg, sizeof(errmsg));

@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.14)
 project(ollama_embed VERSION 1.0.0 LANGUAGES C CXX)
 
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -64,6 +68,8 @@ target_link_libraries(ollama_embed
     PRIVATE
         ${CURL_LIBRARIES}
 )
+
+target_compile_options(ollama_embed PRIVATE -Wall -Wextra)
 
 # MySQL UDFs must not have a "lib" prefix
 set_target_properties(ollama_embed PROPERTIES
