@@ -66,8 +66,16 @@ static std::vector<float> fetch_embedding(const char *text,
         snprintf(errmsg, errmsg_size, "ollama_embed: cJSON_CreateObject failed");
         return result;
     }
-    cJSON_AddStringToObject(root, "model", OLLAMA_MODEL);
-    cJSON_AddStringToObject(root, "prompt", text);
+    if (!cJSON_AddStringToObject(root, "model", OLLAMA_MODEL)) {
+        cJSON_Delete(root);
+        snprintf(errmsg, errmsg_size, "ollama_embed: cJSON_AddStringToObject failed for model");
+        return result;
+    }
+    if (!cJSON_AddStringToObject(root, "prompt", text)) {
+        cJSON_Delete(root);
+        snprintf(errmsg, errmsg_size, "ollama_embed: cJSON_AddStringToObject failed for prompt");
+        return result;
+    }
     char *request_body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!request_body) {
