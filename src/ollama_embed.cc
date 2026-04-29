@@ -108,6 +108,12 @@ static std::vector<float> fetch_embedding(const char *text,
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
     CURLcode rc = curl_easy_perform(curl);
+
+    long http_code = 0;
+    if (rc == CURLE_OK) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    }
+
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     free(request_body);
@@ -116,6 +122,18 @@ static std::vector<float> fetch_embedding(const char *text,
         snprintf(errmsg, errmsg_size,
                  "ollama_embed: HTTP request failed: %s",
                  curl_easy_strerror(rc));
+        return result;
+    }
+
+    if (http_code < 200 || http_code >= 300) {
+        // Include a snippet of the response body to aid debugging
+        std::string snippet = response.data.substr(0, 120);
+        for (char &c : snippet) {
+            if (c == '\n' || c == '\r') c = ' ';
+        }
+        snprintf(errmsg, errmsg_size,
+                 "ollama_embed: Ollama returned HTTP %ld: %.120s",
+                 http_code, snippet.c_str());
         return result;
     }
 
