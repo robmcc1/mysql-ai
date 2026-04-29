@@ -98,10 +98,11 @@ mysql_plugin_dir=$(mysql -u root -p -se "SHOW VARIABLES LIKE 'plugin_dir'" | awk
 sudo cp build/ollama_embed.so "$mysql_plugin_dir"
 ```
 
-Or use the CMake install target (override `MYSQL_PLUGIN_DIR` if needed):
+Or use the CMake install target by configuring `MYSQL_PLUGIN_DIR` explicitly:
 
 ```bash
-sudo cmake --install build --prefix /usr/lib/mysql/plugin
+cmake -S . -B build -DMYSQL_PLUGIN_DIR="$mysql_plugin_dir"
+sudo cmake --install build
 ```
 
 ### Step 2 — Register the UDF with MySQL
