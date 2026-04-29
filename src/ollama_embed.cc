@@ -58,11 +58,12 @@ static size_t curl_write_cb(char *ptr, size_t size, size_t nmemb, void *userdata
 // first concurrent invocation wins and subsequent ones are no-ops.
 // --------------------------------------------------------------------------
 static std::once_flag curl_init_flag;
+static bool           curl_init_ok = false;
 
 static void ensure_curl_global_init()
 {
     std::call_once(curl_init_flag, []() {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
+        curl_init_ok = (curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK);
     });
 }
 
@@ -74,9 +75,13 @@ static std::vector<float> fetch_embedding(const char *text,
                                           char       *errmsg,
                                           size_t      errmsg_size)
 {
-    ensure_curl_global_init();
-
     std::vector<float> result;
+
+    ensure_curl_global_init();
+    if (!curl_init_ok) {
+        snprintf(errmsg, errmsg_size, "ollama_embed: curl_global_init failed");
+        return result;
+    }
 
     // Build JSON request body
     cJSON *root = cJSON_CreateObject();
@@ -177,6 +182,7 @@ static std::vector<float> fetch_embedding(const char *text,
         return result;
     }
 
+    // Dimension can only be checked after parsing; validate before copying.
     int dim = cJSON_GetArraySize(embedding_arr);
     if (dim != EXPECTED_DIMS) {
         snprintf(errmsg, errmsg_size,
