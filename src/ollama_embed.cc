@@ -30,10 +30,11 @@
 // --------------------------------------------------------------------------
 // Constants
 // --------------------------------------------------------------------------
-static const char  OLLAMA_URL[]  = "http://localhost:11434/api/embeddings";
-static const char  OLLAMA_MODEL[] = "qwen3-embedding:0.6b";
-static const int   EXPECTED_DIMS  = 896;
-static const long  CURL_TIMEOUT_S = 30L;
+static const char   OLLAMA_URL[]      = "http://localhost:11434/api/embeddings";
+static const char   OLLAMA_MODEL[]    = "qwen3-embedding:0.6b";
+static const int    EXPECTED_DIMS     = 896;
+static const long   CURL_TIMEOUT_S   = 30L;
+static const size_t MAX_ERROR_SNIPPET = 120;
 
 // --------------------------------------------------------------------------
 // libcurl write callback — appends received data into a std::string
@@ -127,13 +128,16 @@ static std::vector<float> fetch_embedding(const char *text,
 
     if (http_code < 200 || http_code >= 300) {
         // Include a snippet of the response body to aid debugging
-        std::string snippet = response.data.substr(0, 120);
+        std::string snippet = response.data.substr(
+            0, std::min(response.data.size(), MAX_ERROR_SNIPPET));
         for (char &c : snippet) {
             if (c == '\n' || c == '\r') c = ' ';
         }
         snprintf(errmsg, errmsg_size,
-                 "ollama_embed: Ollama returned HTTP %ld: %.120s",
-                 http_code, snippet.c_str());
+                 "ollama_embed: Ollama returned HTTP %ld: %.*s",
+                 http_code,
+                 static_cast<int>(MAX_ERROR_SNIPPET),
+                 snippet.c_str());
         return result;
     }
 
