@@ -65,7 +65,7 @@ mysql-ai/
 
 | Requirement | Version / Notes |
 |---|---|
-| MySQL | **8.0.45 Commercial (Enterprise Edition)** with native `VECTOR` type |
+| MySQL | **9** with native `VECTOR` type |
 | Ollama | Running locally on `http://localhost:11434` |
 | Ollama model | `qwen3-embedding:0.6b` pulled (`ollama pull qwen3-embedding:0.6b`) |
 | libcurl | Development headers + shared library (`libcurl-dev` / `libcurl-devel`) |
