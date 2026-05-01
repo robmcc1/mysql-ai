@@ -437,15 +437,18 @@ BEGIN
 
     SET @__limit = p_limit;
     SET @__sql = CONCAT(
-        'SELECT id, content, created_date, updated_date, ',
-        'VECTOR_COSINE_DISTANCE(embedding, CAST(? AS VECTOR(', v_dims, '))) AS score, ',
-        'ROUND((1 - VECTOR_COSINE_DISTANCE(embedding, CAST(? AS VECTOR(', v_dims, ')))) * 100, 2) AS similarity_pct ',
-        'FROM `', v_table, '` ',
-        'ORDER BY score ASC ',
-        'LIMIT ?'
+        'SELECT id, content, created_date, updated_date, score, ',
+        'ROUND((1 - score / 2) * 100, 2) AS similarity_pct ',
+        'FROM (',
+            'SELECT id, content, created_date, updated_date, ',
+            'VECTOR_COSINE_DISTANCE(embedding, CAST(? AS VECTOR(', v_dims, '))) AS score ',
+            'FROM `', v_table, '` ',
+            'ORDER BY score ASC ',
+            'LIMIT ?',
+        ') t'
     );
     PREPARE __stmt FROM @__sql;
-    EXECUTE __stmt USING @__raw, @__raw, @__limit;
+    EXECUTE __stmt USING @__raw, @__limit;
     DEALLOCATE PREPARE __stmt;
 END $$
 DELIMITER ;

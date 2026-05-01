@@ -69,7 +69,10 @@ target_link_libraries(ollama_embed
         ${CURL_LIBRARIES}
 )
 
-target_compile_options(ollama_embed PRIVATE -Wall -Wextra)
+target_compile_options(ollama_embed PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall;-Wextra>
+)
 
 # MySQL UDFs must not have a "lib" prefix
 set_target_properties(ollama_embed PROPERTIES
